@@ -1,0 +1,21 @@
+import cats.Show
+
+
+// Show の Interface Objects をインポート
+import cats.instances.int._
+import cats.instances.string._
+
+// Show は show メソッドを持つ Interface Objects
+val showInt: Show[Int] = Show.apply[Int]
+val showString: Show[String] = Show.apply[String]
+
+// show メソッドを呼び出す
+showInt.show(123) // ->　res2: String = 123
+
+
+// show メソッドを様々な型に追加する Interface Syntax をインポート
+import cats.syntax.show._ // for show
+
+// show メソッドを使う（例えば Int型に対して定義されている)
+123.show // -> res5: String = 123
+
