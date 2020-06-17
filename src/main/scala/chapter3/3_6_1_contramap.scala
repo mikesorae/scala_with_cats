@@ -1,3 +1,4 @@
+/**
 // Type Class を定義
 trait Printable[A] {
   def format(value: A): String
@@ -27,7 +28,7 @@ implicit val booleanPrintable: Printable[Boolean] = new Printable[Boolean] {
   def format(value: Boolean): String =
     if(value) "yes" else "no"
 }
-
+**/
 
 /**
 
@@ -37,6 +38,7 @@ format(true)
 **/
 
 
+/**
 final case class Box[A](value: A)
 
 //Rather than writing out the complete definition from scratch (new Printable[Box] etc...),
@@ -51,6 +53,8 @@ def unbox[A](box: Box[A]): A = box.value
 
 implicit val boxPrintable: Printable[Box[String]] = stringPrintable.contramap(unbox)
 
+**/
+
 /**
 
 format(Box("hello world"))
@@ -63,7 +67,7 @@ format(Box(true))
 
 
 
-
+/**
 // 回答
 
 implicit def boxPrintable[A](implicit p: Printable[A]) =
@@ -79,16 +83,7 @@ implicit def boxPrintable[A](implicit p: Printable[A]) =
   // 型クラスを用いて定義されている関数にはちゃんと型を渡して上げる必要があると
   p.contramap[Box[A]](_.value)
 
-
-
-
-
-
-
-
-
-
-
+**/
 
 
 

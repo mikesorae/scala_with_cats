@@ -1,3 +1,4 @@
+/**
 // ２方向の変換を渡してあげる事で，既存の encode, decode の対応する型を変更させられると
 // contramap は　1方向の変換用いて既存の１方向の変換が対応する型を変更していた
 
@@ -54,6 +55,7 @@ case class Box[A](value: A)
 implicit def boxCodec[A](implicit c: Codec[A]): Codec[Box[A]] =
   c.imap[Box[A]](Box(_), _.value)
 
+**/
 
 /**
 encode(123.4)

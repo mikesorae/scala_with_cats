@@ -89,6 +89,7 @@ implicit class FunctorOps[F[_], A](src: F[A]) {
 **/
 
 
+/**
 
 // 3.5.4 Exercise: Branching out with Functors
 
@@ -169,7 +170,7 @@ object Tree {
 
 Tree.branch(Tree.leaf(10), Tree.leaf(20)).map(_ * 5)
 
-
+**/
 
 
 
