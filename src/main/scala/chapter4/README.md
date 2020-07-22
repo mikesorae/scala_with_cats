@@ -770,7 +770,7 @@ x // second access
 // res1: Double = 0.013533499657218728
 ```
 
-これに対して、defはlayかつ非メモ化である。
+これに対して、defはlazyかつ非メモ化である。
 
 ```scala
 def y = {
@@ -894,7 +894,7 @@ z.value // second access
 |scala|Cats|Properties|
 |-|-|-|
 |val|Now|eager, memoized|
-|lazy val|Later|eager, memoized|
+|lazy val|Later|lazy, memoized|
 |def|Always|lazy, not memoized|
 
 ### 4.6.3 Eval as a Monad
@@ -995,8 +995,8 @@ factorial(50000).value
 //   ...
 ```
 
-* しかしこれは動かない
-* Evalのmapメソッドが評価される前に再帰してるから(?)
+* しかしこれはスタックオーバーフロー
+* mapメソッド手前でfactorialがすでに再帰してるから
 * ワークアラウンドとして `Eval.defer` を使うことができる
 
 ```scala
@@ -1059,7 +1059,7 @@ foldRight((1 to 100000).toList, 0L)(_ + _)
 * メッセージやエラーやその他のデータの記録ができる
 * 最後の計算結果と一緒にログを取り出すことができる
 
-* Witer Monadの一般的なユースケースは、標準的なロギング技術だと出力途中に他のログが混ざってしまうようなmulti-thread化での連続した処理の記録がある
+* Writer Monadの一般的なユースケースは、標準的なロギング技術だと出力途中に他のログが混ざってしまうようなmulti-thread化での連続した処理の記録がある
 * Writer Monadでは計算結果にログが紐付けられているので、ログが混ざるのを気にすることなく計算を同時に実行することができる
 
 ### 4.7.1 Creating and Unpacking Writers
@@ -1090,7 +1090,7 @@ type Writer[W, A] = WriterT[Id, W, A]
 
 * 利便性のため、Catsはログと結果のためのコンストラクタだけを提供している
 * 結果だけしか要らない場合はpureを使う
-* empty logを作るためにはMonid[W]がスコープにある必要がある
+* empty logを作るためにはMonoid[W]がスコープにある必要がある
 
 ```scala
 import cats.instances.vector._   // for Monoid
