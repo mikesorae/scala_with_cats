@@ -60,7 +60,7 @@ def stringDivideBy(aStr: String, bStr: String): Option[Int] = for {
 
 ### Lists
 
-* はじめてScalaでflatMapに出会うとList上の便利なIteratingのパターンだ考えがち
+* はじめてScalaでflatMapに出会うとList上の便利なIteratingのパターンだと考えがち
 * Listのモナディックな振る舞いに着目すると別の考え方がある
 * Listsを中間成果物のセットだと考えると、flatMapは順序と組み合わせを計算する構造だと考えることができる
     * 以下のコードの例でいうと、x = 3, y = 2で6通りの組み合わせがある
@@ -432,3 +432,809 @@ def countPositive(nums: List[Int]) =
 //               Left("Negative. Stopping!") 
 //                    ^
 ```
+
+このコードがコンパイルに失敗するのは
+
+1. accumuratorのTypeをEitherではなくRightと推論する
+2. Right.applyの型パラメータを指定していないのでLeftのパラメータがNoneで推論される
+
+asRightを使うとRightではなくEitherを返してくれる他、1つの型パラメータを指定できるようになるのでこの問題が解決できる。
+
+```scala
+def countPositive(nums: List[Int]) = 
+  nums.foldLeft(0.asRight[String]) { (accumulator, num) =>
+    if(num > 0) {
+      accumulator.map(_ + 1)
+    } else {
+      Left("Negative. Stopping!")
+    } 
+  }
+countPositive(List(1, 2, 3))
+// res5: Either[String,Int] = Right(3)
+
+countPositive(List(1, -2, 3))
+// res6: Either[String,Int] = Left(Negative. Stopping!)
+```
+
+
+`cats.syntax.either`はEitherのcompanionオブジェクトに便利なメソッドを追加する。
+
+`catchOnly` や `catchNonFatal` は例外を補足するとても便利なEitherインスタンスを生成する。
+
+```scala
+Either.catchOnly[NumberFormatException]("foo".toInt)
+// res7: Either[NumberFormatException,Int] = Left(java.lang. NumberFormatException: For input string: "foo")
+
+Either.catchNonFatal(sys.error("Badness"))
+// res8: Either[Throwable,Nothing] = Left(java.lang.RuntimeException: Badness)
+```
+
+その他のデータ型からEitherを生成するメソッドもある。
+
+```scala
+Either.fromTry(scala.util.Try("foo".toInt))
+// res9: Either[Throwable,Int] = Left(java.lang.NumberFormatException: For input string: "foo")
+
+Either.fromOption[String, Int](None, "Badness") 
+// res10: Either[String,Int] = Left(Badness)
+```
+
+### 4.4.3 Transforming Eithers
+
+`cats.syntax.either` は他にも便利なインスタンス生成のメソッドを提供する。
+`orElse` や `getOrElse` を使って右側やデフォルト値を取り出すことができる。
+
+```scala
+import cats.syntax.either._
+
+"Error".asLeft[Int].getOrElse(0)
+// res11: Int = 0
+
+"Error".asLeft[Int].orElse(2.asRight[String]) 
+// res12: Either[String,Int] = Right(2)
+```
+
+`ensure` を使うと右側の値がPredicateを満たすかどうかを判定することができる。
+
+```scala
+ -1.asRight[String].ensure("Must be non-negative!")(_ > 0) 
+ // res13: Either[String,Int] = Left(Must be non-negative!)
+ ```
+
+`recover`、`recoverWith` はFutureと同じようなエラーハンドリングを提供する。
+
+```scala
+"error".asLeft[Int].recover {
+  case str: String => -1
+}
+// res14: Either[String,Int] = Right(-1)
+
+"error".asLeft[Int].recoverWith {
+  case str: String => Right(-1)
+}
+// res15: Either[String,Int] = Right(-1)
+```
+
+mapを補完する `leftMap`、`bimap` もある。
+
+```scala
+"foo".asLeft[Int].leftMap(_.reverse)
+// res16: Either[String,Int] = Left(oof)
+
+6.asRight[String].bimap(_.reverse, _ * 7)
+// res17: Either[String,Int] = Right(42)
+
+"bar".asLeft[Int].bimap(_.reverse, _ * 7)
+// res18: Either[String,Int] = Left(rab)
+```
+
+`swap` メソッドを使うと右側と左側を入れ替えることができる。
+
+```
+123.asRight[String]
+// res19: Either[String,Int] = Right(123)
+
+123.asRight[String].swap
+// res20: scala.util.Either[Int,String] = Left(123)
+```
+
+Catsは `toOption`, `toList`, `toTry`, `toValidated` などの変換メソッドも提供している。
+
+### 4.4.4 Error Handling
+
+* Eitherは一般的にfail-fastなエラーハンドリングで使われる
+* flatMapで計算を繋げ、途中で計算が失敗すると残りの計算は実行されない
+
+```scala
+for {
+  a <- 1.asRight[String]
+  b <- 0.asRight[String]
+  c <- if(b == 0) "DIV0".asLeft[Int]
+       else (a / b).asRight[String]
+} yield c * 100
+// res21: scala.util.Either[String,Int] = Left(DIV0)
+```
+
+* Eitherを使うとき、我々はエラーをどんな型で表現するか決めないといけない
+
+```scala
+  type Result[A] = Either[Throwable, A]
+```
+
+* scala.util.Tryに似たセマンティクスを提供する
+* Throwableだと型の範囲が広すぎて、どんなエラーがおきたのかわからない
+* 他には代数的データ型で独自のエラーを表現するアプローチがある
+
+```scala
+sealed trait LoginError extends Product with Serializable 
+final case class UserNotFound(username: String) extends LoginError
+final case class PasswordIncorrect(username: String) extends LoginError
+
+case object UnexpectedError extends LoginError
+
+case class User(username: String, password: String)
+
+type LoginResult = Either[LoginError, User]
+```
+
+* Throwableで見たような問題を解決できる
+* 決められたエラーのセットとそれ以外を扱えるようになる
+* パターンマッチで安全にエラーチェックができる
+
+```scala
+// Choose error-handling behaviour based on type:
+def handleError(error: LoginError): Unit =
+  error match {
+    case UserNotFound(u) =>
+      println(s"User not found: $u")
+    case PasswordIncorrect(u) =>
+      println(s"Password incorrect: $u")
+    case UnexpectedError =>
+      println(s"Unexpected error")
+}
+val result1: LoginResult = User("dave", "passw0rd").asRight
+// result1: LoginResult = Right(User(dave,passw0rd))
+
+val result2: LoginResult = UserNotFound("dave").asLeft
+// result2: LoginResult = Left(UserNotFound(dave))
+
+result1.fold(handleError, println)
+// User(dave,passw0rd)
+
+result2.fold(handleError, println)
+// User not found: dave
+```
+
+### 4.4.5 Exercise: What is Best?
+
+上記のサンプルのエラーハンドリング戦略はすべての目的に適しているだろうか。
+
+エラーハンドリングでは他にどんな機能が必要になるだろうか。
+
+オープン・クエスチョンなので例だけあげておく。
+
+* Error recovery is important when processing large jobs. We don’t want to run a job for a day and then find it failed on the last element.
+
+* Error reporting is equally important. We need to know what went wrong, not just that something went wrong.
+
+* In a number of cases, we want to collect all the errors, not just the first one we encountered. A typical example is validating a web form. It’s a far better experience to report all errors to the user when they submit a form than to report them one at a time.
+
+
+## 4.5 Aside: Error Handling and MonadError
+
+* Catsは `MonadError` という型クラスを提供する
+* MonadError は Either のようなエラーハンドリングのための抽象
+* MonadError は エラー発生とエラーハンドリングの操作を提供する
+
+### This Section is Optional!
+
+* エラーハンドリングのMonadを抽象化したいケース以外ではMonadErrorを使う必要はない
+  * e.g. FutureとTry、EitherとEitherT(Chapter5参照)の抽象化等
+
+### 4.5.1 The MonadError Type Class
+
+シンプルにしたMonadErrorの定義
+
+```scala
+package cats
+
+trait MonadError[F[_], E] extends Monad[F] {
+  // Lift an error into the `F` context:
+  def raiseError[A](e: E): F[A]
+
+  // Handle an error, potentially recovering from it:
+  def handleError[A](fa: F[A])(f: E => A): F[A]
+
+  // Test an instance of `F`,
+  // failing if the predicate is not satisfied:
+  def ensure[A](fa: F[A])(e: E)(f: A => Boolean): F[A]
+}
+```
+
+MonadErrorは2つの型パラメータを持つ。
+
+* FはErrorを扱うMonadの型
+* EはFのMonadが扱うErrorの型
+
+```scala
+import cats.MonadError
+import cats.instances.either._ // for MonadError
+
+type ErrorOr[A] = Either[String, A]
+val monadError = MonadError[ErrorOr, String]
+```
+
+### ApplicativeError
+
+* 実はMonadErrorは `ApplicativeError` 型クラスをextendsしている
+* ApplicativeErrorはChapter6でやる
+* セマンティクスは他の型クラスと同じなので、今は詳細は飛ばす
+
+### 4.5.2 Raising and Handling Errors
+
+* 重要なメソッドは `raiseError` と `handleError`
+* raiseErrorは、失敗を表すインスタンスを生成することを除けばMonadのpureのようなもの
+
+```scala
+val success = monadError.pure(42)
+// success: ErrorOr[Int] = Right(42)
+
+val failure = monadError.raiseError("Badness")
+// failure: ErrorOr[Nothing] = Left(Badness)
+```
+
+* handleErrorはraiseErrorを補うもの
+* エラーを受け取って成功に変換する(変換しないこともある)
+* Futureのrecoverメソッドに似ている
+
+```scala
+monadError.handleError(failure) {
+  case "Badness" =>
+    monadError.pure("It's ok")
+  case other =>
+    monadError.raiseError("It's not ok")
+}
+// res2: ErrorOr[ErrorOr[String]] = Right(Right(It's ok))
+```
+
+* もう一つ便利なメソッドとして、filter的な振る舞いをする `ensure` がある
+
+```scala
+import cats.syntax.either._ // for asRight
+
+monadError.ensure(success)("Number too low!")(_ > 1000) // res3: ErrorOr[Int] = Left(Number too low!)
+```
+
+* `raiseError` と `handleError` のsyntaxは `cats.syntax.applicativeError`
+* `ensure` のsyntaxは `cats.syntax.monadError`
+
+```scala
+import cats.syntax.applicative._ // for pure
+import cats.syntax.applicativeError._ // for raiseError etc import cats.syntax.monadError._ // for ensure 
+
+val success = 42.pure[ErrorOr]
+// success: ErrorOr[Int] = Right(42)
+
+val failure = "Badness".raiseError[ErrorOr, Int]
+// failure: ErrorOr[Int] = Left(Badness)
+
+success.ensure("Number to low!")(_ > 1000)
+// res4: Either[String,Int] = Left(Number to low!)
+```
+
+他にも便利なメソッドが沢山あるので、`cats.MonadError`、`cats.ApplicativeError`を参照
+
+
+### 4.5.3 Instances of MonadError
+
+* CatsはEither、Future、Tryなど様々なデータ型に対するMonadErrorインスタンスを用意している
+* Eitherのエラー型はカスタマイズ可能だが、FutureとTryは常にThrowableを返す
+
+```scala
+import scala.util.Try
+import cats.instances.try_._ // for MonadError
+
+val exn: Throwable =
+  new RuntimeException("It's all gone wrong")
+
+exn.raiseError[Try, Int]
+// res6: scala.util.Try[Int] = Failure(java.lang.RuntimeException: It' s all gone wrong)
+```
+
+## 4.6 The Eval Monad
+
+* `cats.Eval` は今までとは違った(?) Evaluation の抽象化のためのMonad
+* 一般的にはeagerとlazyの2つのモデルがある
+* Evalではさらに、結果がメモ化されるかどうかの違いも提供する
+
+### 4.6.1 Eager, Lazy, Memoized, Oh My!
+
+* Eagerの計算はすぐさま実行されるけど、Lazyはアクセスされたときに実行される
+* メモ化された計算は最初だけ実行されて、それ以降はキャッシュされる
+
+* 例えばScalaのvalはeagerだしメモ化されている
+* 以下の例では、目に見える副作用を使ってそれを確認することができる
+
+```scala
+val x = {
+  println("Computing X")
+  math.random
+}
+// Computing X
+// x: Double = 0.013533499657218728
+
+x // first access
+// res0: Double = 0.013533499657218728
+
+x // second access
+// res1: Double = 0.013533499657218728
+```
+
+これに対して、defはlayかつ非メモ化である。
+
+```scala
+def y = {
+  println("Computing Y")
+  math.random
+}
+// y: Double
+
+y // first access
+// Computing Y
+// res2: Double = 0.5548281126990907
+
+y // second access
+// Computing Y
+// res3: Double = 0.7681777032036599
+```
+
+最後にもう一つ、lazy valはlazyかつメモ化である。
+
+```scala
+lazy val z = {
+  println("Computing Z")
+  math.random
+}
+// z: Double = <lazy>
+
+z // first access
+// Computing Z
+// res4: Double = 0.45707125364871903
+
+z // second access
+// res5: Double = 0.45707125364871903
+```
+
+### 4.6.2 Eval’s Models of Evaluation
+
+* Evalには `Now`、`Later`、`Always`の3つのサブタイプがある
+* それぞれコンストラクタメソッドがある
+
+```scala
+import cats.Eval
+
+val now = Eval.now(math.random + 1000)
+// now: cats.Eval[Double] = Now(1000.337992547842)
+
+val later = Eval.later(math.random + 2000)
+// later: cats.Eval[Double] = cats.Later@37f34fd2
+
+val always = Eval.always(math.random + 3000)
+// always: cats.Eval[Double] = cats.Always@486516b
+```
+
+valueメソッドで値を取り出すことができる。
+
+```scala
+now.value
+// res6: Double = 1000.337992547842
+
+later.value
+// res7: Double = 2000.863079768816
+
+always.value
+// res8: Double = 3000.710688646907
+```
+
+* nowはvalと大体同じ
+* eager + memoized
+
+```scala
+val x = Eval.now {
+  println("Computing X")
+  math.random
+}
+// Computing X
+// x: cats.Eval[Double] = Now(0.5415551857150346)
+
+x.value // first access
+// res9: Double = 0.5415551857150346
+
+x.value // second access
+// res10: Double = 0.5415551857150346
+```
+
+* alwaysはdefと大体同じ
+* lazy + not memoized
+
+```scala
+val y = Eval.always {
+  println("Computing Y")
+  math.random
+}
+// y: cats.Eval[Double] = cats.Always@3289cc05
+
+y.value // first access
+// Computing Y
+// res11: Double = 0.06355685569536818
+
+y.value // second access
+// Computing Y
+// res12: Double = 0.27425753581857903
+```
+
+* laterはlazy valと大体同じ
+* lazy + memoized
+
+```scala
+val z = Eval.later {
+  println("Computing Z")
+  math.random
+}
+// z: cats.Eval[Double] = cats.Later@7a533449
+
+z.value // first access
+// Computing Z
+// res13: Double = 0.3819703252438429
+
+z.value // second access
+// res14: Double = 0.3819703252438429
+```
+
+|scala|Cats|Properties|
+|-|-|-|
+|val|Now|eager, memoized|
+|lazy val|Later|eager, memoized|
+|def|Always|lazy, not memoized|
+
+### 4.6.3 Eval as a Monad
+
+* 他のMonadと同じようにmap/flatMapでchainできる
+* valueを呼ぶまで計算は実行されない
+
+```scala
+val greeting = Eval.
+  always { println("Step 1"); "Hello" }.
+  map { str => println("Step 2"); s"$str world" }
+// greeting: cats.Eval[String] = cats.Eval$$anon$8@79ddd73b
+
+greeting.value
+// Step 1
+// Step 2
+// res15: String = Hello world
+```
+
+???
+
+```scala
+val ans = for {
+  a <- Eval.now { println("Calculating A"); 40 }
+  b <- Eval.always { println("Calculating B"); 2 }
+} yield {
+println("Adding A and B") a+b
+}
+// Calculating A
+// ans: cats.Eval[Int] = cats.Eval$$anon$8@12da1eee
+
+ans.value // first access
+// Calculating B
+// Adding A and B
+// res16: Int = 42
+
+ans.value // second access
+// Calculating B
+// Adding A and B
+// res17: Int = 42
+```
+
+* Evalには計算結果をメモ化するための `memoize` メソッドがある
+* memoizeを呼び出した手前まで(?)の計算がキャッシュされる
+
+```scala
+val saying = Eval.
+  always { println("Step 1"); "The cat" }.
+  map { str => println("Step 2"); s"$str sat on" }.
+  memoize.
+  map { str => println("Step 3"); s"$str the mat" }
+// saying: cats.Eval[String] = cats.Eval$$anon$8@159a20cc
+
+saying.value // first access
+// Step 1
+// Step 2
+// Step 3
+// res18: String = The cat sat on the mat
+
+saying.value // second access
+// Step 3
+// res19: String = The cat sat on the mat
+```
+
+### 4.6.4 Trampolining and Eval.defer
+
+* Evalの便利な性質の1つはmap/flatMapがトランポリン化されているところ
+* つまり、スタックフレームが消費することなくmapやflatMapをネストすることができる
+* 我々はこの性質を "stack safety" と呼ぶ
+
+階乗のサンプル
+
+```scala
+ def factorial(n: BigInt): BigInt =
+  if(n == 1) n else n * factorial(n - 1)
+```
+
+これは簡単にスタックオーバーフローさせることができる。
+
+```scala
+factorial(50000)
+// java.lang.StackOverflowError
+//   ...
+```
+
+Evalを使うとstack safeに書き直すことができる。
+
+```scala
+def factorial(n: BigInt): Eval[BigInt] =
+  if(n == 1) {
+    Eval.now(n)
+  } else {
+    factorial(n - 1).map(_ * n)
+  }
+
+factorial(50000).value
+// java.lang.StackOverflowError
+//   ...
+```
+
+* しかしこれは動かない
+* Evalのmapメソッドが評価される前に再帰してるから(?)
+* ワークアラウンドとして `Eval.defer` を使うことができる
+
+```scala
+def factorial(n: BigInt): Eval[BigInt] =
+  if(n == 1) {
+    Eval.now(n)
+  } else {
+    Eval.defer(factorial(n - 1).map(_ * n))
+  }
+
+factorial(50000).value
+// res20: BigInt = 334732050959714483691547609407148647791277322381045480773010032199016802214436564
+```
+
+* Evalは巨大な計算とデータ構造をstack safeにやりたいときに便利
+* ただし、トランポリン化が自由ではないことを心に留めておくこと
+* Evalは計算オブジェクトのチェーンをヒープに保存することでスタックの消費を回避している
+* スタックの上限は無いがヒープの上限は存在する
+
+### 4.6.5 Exercise: Safer Folding using Eval
+
+nativeのfoldRightをEvalでstack safeに書き換えてみよう。
+
+```scala
+def foldRight[A, B](as: List[A], acc: B)(fn: (A, B) => B): B =
+  as match {
+    case head :: tail =>
+      fn(head, foldRight(tail, acc)(fn))
+    case Nil =>
+      acc
+  }
+```
+
+```scala
+import cats.Eval
+
+def foldRightEval[A, B](as: List[A], acc: Eval[B])
+    (fn: (A, Eval[B]) => Eval[B]): Eval[B] =
+  as match {
+    case head :: tail =>
+      Eval.defer(fn(head, foldRightEval(tail, acc)(fn)))
+    case Nil =>
+      acc
+  }
+```
+
+```scala
+def foldRight[A, B](as: List[A], acc: B)(fn: (A, B) => B): B =
+  foldRightEval(as, Eval.now(acc)) { (a, b) =>
+    b.map(fn(a, _))
+  }.value
+
+foldRight((1 to 100000).toList, 0L)(_ + _)
+// res22: Long = 5000050000
+```
+
+## 4.7 The Writer Monad
+
+* `cats.data.Writer` は計算とログを一緒に持ち回せるようにするMonad
+* メッセージやエラーやその他のデータの記録ができる
+* 最後の計算結果と一緒にログを取り出すことができる
+
+* Witer Monadの一般的なユースケースは、標準的なロギング技術だと出力途中に他のログが混ざってしまうようなmulti-thread化での連続した処理の記録がある
+* Writer Monadでは計算結果にログが紐付けられているので、ログが混ざるのを気にすることなく計算を同時に実行することができる
+
+### 4.7.1 Creating and Unpacking Writers
+
+* `Writer[W, A]` は2つの値を運ぶ
+* ログの型 `W` と、結果の型 `A`
+
+```scala
+import cats.data.Writer
+import cats.instances.vector._ // for Monoid
+
+Writer(Vector(
+  "It was the best of times",
+  "it was the worst of times"
+), 1859)
+// res0: cats.data.WriterT[cats.Id,scala.collection.immutable.Vector[String],Int] = WriterT((Vector(It was the best of times, it was the worst of times),1859))
+```
+
+* 実際にはコンソールには `Writer[Vector[String], Int]` ではなく `WriterT[Id, Vector[String], Int]` が出力される
+* コードの再利用性のためWriterTを使っている
+* WriterTは次の章で出てくる `monad transformer` の一例
+* WriterはWriterTのaliasである
+* 一旦気にせず Writer[W, A] だと思って読みすすめる
+
+```scala
+type Writer[W, A] = WriterT[Id, W, A]
+```
+
+* 利便性のため、Catsはログと結果のためのコンストラクタだけを提供している
+* 結果だけしか要らない場合はpureを使う
+* empty logを作るためにはMonid[W]がスコープにある必要がある
+
+```scala
+import cats.instances.vector._   // for Monoid
+import cats.syntax.applicative._ // for pure
+
+type Logged[A] = Writer[Vector[String], A]
+
+123.pure[Logged]
+// res2: Logged[Int] = WriterT((Vector(),123))
+```
+
+* ログだけあって結果がない場合は `cats.syntax.writer` の `tell` を使う
+
+```scala
+import cats.syntax.writer._ // for tell
+
+Vector("msg1", "msg2", "msg3").tell
+// res3: cats.data.Writer[scala.collection.immutable.Vector[String], Unit] = WriterT((Vector(msg1, msg2, msg3),()))
+```
+
+* ログも結果もあるときは `cats.syntax.writer` の `writer` メソッドか `Writer.apply` が使える
+
+```scala
+import cats.syntax.writer._ // for writer
+
+val a = Writer(Vector("msg1", "msg2", "msg3"), 123)
+// a: cats.data.WriterT[cats.Id,scala.collection.immutable.Vector[String],Int] = WriterT((Vector(msg1, msg2, msg3),123))
+
+val b = 123.writer(Vector("msg1", "msg2", "msg3"))
+// b: cats.data.Writer[scala.collection.immutable.Vector[String],Int] = WriterT((Vector(msg1, msg2, msg3),123))
+```
+
+* 結果を取り出すときは `value`
+* ログを取り出すときは `written`
+
+```scala
+val aResult: Int =
+  a.value
+// aResult: Int = 123
+
+val aLog: Vector[String] =
+  a.written
+// aLog: Vector[String] = Vector(msg1, msg2, msg3)
+```
+
+* `run` を使うとTupleで両方取り出せる
+
+```scala
+val (log, result) = b.run
+// log: scala.collection.immutable.Vector[String] = Vector(msg1, msg2, msg3)
+// result: Int = 123
+```
+
+### 4.7.2 Composing and Transforming Writers
+
+* Writerのmap/flatMapは計算結果とログを元のWriterの結果に追加する
+* Vectorのような追記、連結ができるデータ型を使うのが良い
+
+```scala
+val writer1 = for {
+  a <- 10.pure[Logged]
+  _ <- Vector("a", "b", "c").tell
+  b <- 32.writer(Vector("x", "y", "z"))
+} yield a + b
+// writer1: cats.data.WriterT[cats.Id,Vector[String],Int] = WriterT((Vector(a, b, c, x, y, z),42))
+
+writer1.run
+// res4: cats.Id[(Vector[String], Int)] = (Vector(a, b, c, x, y, z) ,42)
+```
+
+* `mapWritten` を使うとログを加工できる
+
+```scala
+val writer2 = writer1.mapWritten(_.map(_.toUpperCase))
+// writer2: cats.data.WriterT[cats.Id,scala.collection.immutable. Vector[String],Int] = WriterT((Vector(A, B, C, X, Y, Z),42))
+
+writer2.run
+// res5: cats.Id[(scala.collection.immutable.Vector[String], Int)] = ( Vector(A, B, C, X, Y, Z),42)
+```
+
+* ログと結果の両方を加工したいときは `bimap` を使う
+
+```scala
+val writer3 = writer1.bimap(
+  log => log.map(_.toUpperCase),
+  res => res * 100
+)
+// writer3: cats.data.WriterT[cats.Id,scala.collection.immutable. Vector[String],Int] = WriterT((Vector(A, B, C, X, Y, Z),4200))
+
+writer3.run
+// res6: cats.Id[(scala.collection.immutable.Vector[String], Int)] = ( Vector(A, B, C, X, Y, Z),4200)
+val writer4 = writer1.mapBoth { (log, res) =>
+  val log2 = log.map(_ + "!")
+  val res2 = res * 1000
+  (log2, res2)
+}
+// writer4: cats.data.WriterT[cats.Id,scala.collection.immutable. Vector[String],Int] = WriterT((Vector(a!, b!, c!, x!, y!, z!) ,42000))
+
+writer4.run
+// res7: cats.Id[(scala.collection.immutable.Vector[String], Int)] = ( Vector(a!, b!, c!, x!, y!, z!),42000)
+```
+
+* `reset` でログのリセットができる
+* `swap` で結果とログが入れ替えられる
+
+```scala
+val writer5 = writer1.reset
+// writer5: cats.data.WriterT[cats.Id,Vector[String],Int] = WriterT((Vector(),42))
+
+writer5.run
+// res8: cats.Id[(Vector[String], Int)] = (Vector(),42)
+val writer6 = writer1.swap
+// writer6: cats.data.WriterT[cats.Id,Int,Vector[String]] = WriterT((42,Vector(a, b, c, x, y, z)))
+
+writer6.run
+// res9: cats.Id[(Int, Vector[String])] = (42,Vector(a, b, c, x, y, z) )
+```
+
+### 4.7.3 Exercise: Show Your Working
+
+TODO
+
+
+## 4.8 The Reader Monad
+
+* `cats.data.Reader` はなんらかの入力に依存する連続した計算のためのMonad
+
+* よくある使い方としてはdependency injectionがある
+* 複数の外部設定に依存した操作がいくつかあるとき、Reader Monadでそれらをchainして1つの大きな操作にすることができる
+* パラメータとして1つの設定を受け取り、順序の指定ができる
+
+### 4.8.1 Creating and Unpacking Readers
+
+* `Reader.apply` を使って関数 `A => B` から `Reader[A, B]` を作ることができる
+
+```scala
+import cats.data.Reader
+
+case class Cat(name: String, favoriteFood: String)
+// defined class Cat
+
+val catName: Reader[Cat, String] =
+  Reader(cat => cat.name)
+// catName: cats.data.Reader[Cat,String] = Kleisli(<function1>)
+```
+
+
