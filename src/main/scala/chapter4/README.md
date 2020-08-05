@@ -1275,8 +1275,7 @@ greetAndFeed(Cat("Garfield", "lasagne"))
 // res3: cats.Id[String] = Hello Garfield. Have a nice bowl of lasagne
 .
 greetAndFeed(Cat("Heathcliff", "junk food"))
-// res4: cats.Id[String] = Hello Heathcliff. Have a nice bowl of junk
-food.
+// res4: cats.Id[String] = Hello Heathcliff. Have a nice bowl of junk food.
 ```
 
 #### 4.8.3 Exercise: Hacking on Readers
@@ -1463,11 +1462,11 @@ val (state, result) = both.run(20).value
 
 * Stateモナドを使う一般的なモデルは、各計算ステップをインスタンスで表現し、標準的なモナド演算子で合成する
 * Catsはprimitiveなステップを生成するための便利なコンストラクタを提供する
-  * resultを取り出す `get`
-  * stateをupdateしてunitを返す `set`
-  * stateを無視してresultを返す `pure`
-  * stateにtransformを適用して取り出す `inspect`
-  * stateにupdateを適用して返す `modify`
+  * 値を受け取って(値, 値)を返す `get`
+  * stateをupdateして(state, unit)を返す `set`
+  * stateを無視して(値, result)を返す `pure`
+  * stateにtransformを適用して(値, transform(値))を返す `inspect`
+  * stateにupdateを適用して(transform(値), unit)を返す `modify`
 
 
 ```scala
@@ -1478,8 +1477,7 @@ getDemo.run(10).value
 // res3: (Int, Int) = (10,10)
 
 val setDemo = State.set[Int](30)
-// setDemo: cats.data.State[Int,Unit] = cats.data.
-     IndexedStateT@4168bec2
+// setDemo: cats.data.State[Int,Unit] = cats.data.IndexedStateT@4168bec2
 
 setDemo.run(10).value
 // res4: (Int, Unit) = (30,())
@@ -1517,8 +1515,7 @@ val program: State[Int, (Int, Int, Int)] = for {
   _ <- modify[Int](_ + 1)
 c <- inspect[Int, Int](_ * 1000)
 } yield (a, b, c)
-// program: cats.data.State[Int,(Int, Int, Int)] = cats.data.
-     IndexedStateT@22a799f8
+// program: cats.data.State[Int,(Int, Int, Int)] = cats.data.IndexedStateT@22a799f8
 
 val (state, result) = program.run(1).value
 // state: Int = 3
@@ -1539,6 +1536,7 @@ Optionの例
 ```scala
 import cats.Monad
 import scala.annotation.tailrec
+
 val optionMonad = new Monad[Option] {
   def flatMap[A, B](opt: Option[A])
       (fn: A => Option[B]): Option[B] =
@@ -1591,13 +1589,14 @@ import cats.Monad
 
 implicit val treeMonad = new Monad[Tree] {
   def pure[A](value: A): Tree[A] =
+    Leaf(value)
 
-Leaf(value)
   def flatMap[A, B](tree: Tree[A])
       (func: A => Tree[B]): Tree[B] =
     tree match {
       case Branch(l, r) =>
-        Branch(flatMap(l)(func), flatMap(r)(func)) case Leaf(value) =>
+        Branch(flatMap(l)(func), flatMap(r)(func)) 
+      case Leaf(value) =>
         func(value)
     }
 
@@ -1624,7 +1623,8 @@ implicit val treeMonad = new Monad[Tree] {
       (func: A => Tree[B]): Tree[B] =
     tree match {
       case Branch(l, r) =>
-        Branch(flatMap(l)(func), flatMap(r)(func)) case Leaf(value) =>
+        Branch(flatMap(l)(func), flatMap(r)(func)) 
+      case Leaf(value) =>
         func(value)
       }
 
