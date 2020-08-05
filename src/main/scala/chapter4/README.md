@@ -1237,4 +1237,431 @@ val catName: Reader[Cat, String] =
 // catName: cats.data.Reader[Cat,String] = Kleisli(<function1>)
 ```
 
+* `Reader.run` でCatに関数を適用する
 
+```scala
+ catName.run(Cat("Garfield", "lasagne"))
+// res0: cats.Id[String] = Garfield
+```
+
+#### 4.8.2 Composing Readers
+
+* Readerモナドの真の力は map / flatMap で異なる種類の関数を合成するときに発揮される
+* 一般的に、同じタイプのconfigurationを受け取るReaderのセットを定義し、map / flatMap で繋げ、最後に run を呼んで設定をinjectする
+
+map メソッドは単に、その結果を関数に渡すことでReaderの計算を拡張する。
+
+```scala
+val greetKitty: Reader[Cat, String] =
+  catName.map(name => s"Hello ${name}")
+
+greetKitty.run(Cat("Heathcliff", "junk food")) // res1: cats.Id[String] = Hello Heathcliff
+```
+
+* flatMapを使うと、同じ入力型に依存する複数のReaderを結合できるようになる
+* greetingに加えてfeedを追加したサンプルで例を示す。
+
+```scala
+val feedKitty: Reader[Cat, String] =
+Reader(cat => s"Have a nice bowl of ${cat.favoriteFood}")
+
+val greetAndFeed: Reader[Cat, String] =
+  for {
+    greet <- greetKitty
+    feed  <- feedKitty
+  } yield s"$greet. $feed."
+
+greetAndFeed(Cat("Garfield", "lasagne"))
+// res3: cats.Id[String] = Hello Garfield. Have a nice bowl of lasagne
+.
+greetAndFeed(Cat("Heathcliff", "junk food"))
+// res4: cats.Id[String] = Hello Heathcliff. Have a nice bowl of junk
+food.
+```
+
+#### 4.8.3 Exercise: Hacking on Readers
+
+* 典型的なReaderモナドの使い方は、configurationをパラメータとして受け取るプログラムの構築
+* シンプルなログインシステムの例をやってみる
+* Configurationは2つのデータベースから成り、それぞれ有効なユーザのリストとそのパスワードのリストを持つ
+
+```scala
+case class Db(
+  usernames: Map[Int, String],
+  passwords: Map[String, String]
+)
+```
+
+* 最初にDbを受け取るReaderとして DbReader エイリアスを作る。
+* これを定義しておくと以降のコードが短くなる
+
+```scala
+type DbReader[A] = Reader[Db, A]
+```
+
+* Int型の user ID から `username` を検索するのと、String型の username からパスワードを検索するための DbReader を生成するメソッドを作成する
+
+```scala
+def findUsername(userId: Int): DbReader[Option[String]] =
+  Reader(db => db.usernames.get(userId))
+
+def checkPassword(
+      username: String,
+      password: String): DbReader[Boolean] =
+  Reader(db => db.passwords.get(username).contains(password))
+```
+
+* 最後に、与えられた username と password をチェックする `checkLogin` メソッドを作る
+
+```scala
+def checkLogin(
+      userId: Int,
+      password: String): DbReader[Boolean] =
+  for {
+    username   <- findUserName(userId)
+    passwordOk <- username.map { username =>
+      checkPassword(username, password)
+    }.getOrElse {
+      false.pure[DbReader]
+    }
+  } yield passwordOk
+```
+
+これを使うと以下のようにログインチェックができるようになる
+
+```scala
+val users = Map(
+  1 -> "dade",
+  2 -> "kate",
+  3 -> "margo"
+)
+
+val passwords = Map(
+  "dade"  -> "zerocool",
+  "kate"  -> "acidburn",
+  "margo" -> "secret"
+)
+
+val db = Db(users, passwords)
+
+checkLogin(1, "zerocool").run(db)
+// res10: cats.Id[Boolean] = true
+
+checkLogin(4, "davinci").run(db)
+// res11: cats.Id[Boolean] = false
+```
+
+#### 4.8.4 When to Use Readers?
+
+* Readerモナドは Dependency Injection を行うツールの1つ
+* 依存性をinputとして受け取る関数を構築して map / flatMapで chain できる
+* ScalaにはDIを実現するための様々な方法がある
+  * 複数のParameterリストを受け取るメソッド
+  * implicitパラメータや型クラスの経由
+  * cake pattern
+  * その他のDIフレームワーク
+* Readerは以下のようなシチュエーションで最も役に立つ
+  * 関数で簡単に表現できるようなバッチプログラムの構築時
+  * パラメータのインジェクションを遅延させる必要がある場合
+  * プログラムの部品をテストできるようにする必要がある場合
+* もっと依存が多く複雑な場合や、プログラムが純粋な関数で表現できないような場合は、他のDIテクニックを使うのが適切だろう
+
+#### Kleisli Arrows
+
+* consoleでReaderが `Kleisli` という別の型で実装されていることに気づいただろう
+* Kleisli は Reader の更に一般的な形式で、結果型の型コンストラクタを一般化する
+* Chapter5で出てくる
+
+### 4.9 The State Monad
+
+* `cats.data.State` を使うと、計算の一部として状態をもち回せるようになる
+* アトミックな状態操作を表現するSateインスタンスを定義し、map / flatMap でそれらをスレッド化するようにした
+* これにより、mutable stateをmutateすることなく純粋関数的なやりかたで実現できる
+
+#### 4.9.1 Creating and Unpacking State
+
+* 要約すると `State[S, A]` は `S => (S, A)` という関数の型を表す
+* S は State の型で、A は結果の型
+
+```scala
+import cats.data.State
+
+val a = State[Int, String] { state =>
+  (state, s"The state is $state")
+}
+// a: cats.data.State[Int,String] = cats.data.IndexedStateT@6ceace82
+```
+
+* 言い換えればStateインスタンスは以下の2つのことをやっている
+  * 入力のStateを出力のStateに変形する
+  * 結果を計算する
+
+* 初期状態を渡すことでStateモナドを `run` することができる
+* Stateモナドには異なる結果の組み合わせを返す `run`, `runS`, `runA` の3つのメソッドがある
+* それぞれのメソッドはStackを安全に扱うためEvalインスタンスを返す
+
+```scala
+// Get the state and the result:
+val (state, result) = a.run(10).value
+// state: Int = 10
+// result: String = The state is 10
+
+// Get the state, ignore the result:
+val state = a.runS(10).value
+// state: Int = 10
+
+// Get the result, ignore the state:
+val result = a.runA(10).value
+// result: String = The state is 10
+```
+
+余談
+```scala
+a: cats.data.State[Int,String] = cats.data.IndexedStateT@bce093db
+
+scala> a.run(10)
+res0: cats.Eval[(Int, String)] = cats.Eval$$anon$4@e576d26
+
+scala> a.runS(20)
+res1: cats.Eval[Int] = cats.Eval$$anon$1@c10d3d05
+
+scala> a.runA(30)
+res2: cats.Eval[String] = cats.Eval$$anon$1@2f2c1bde
+```
+
+#### 4.9.2 Composing and Transforming State
+
+* Readerで見たのと同じように、Stateも map / flatMap で結合することにより力を発揮する
+
+```scala
+val step1 = State[Int, String] { num =>
+  val ans = num + 1
+  (ans, s"Result of step1: $ans")
+}
+// step1: cats.data.State[Int,String] = cats.data. IndexedStateT@76122894
+
+val step2 = State[Int, String] { num =>
+  val ans = num * 2
+  (ans, s"Result of step2: $ans")
+}
+// step2: cats.data.State[Int,String] = cats.data. IndexedStateT@1eaaaa5d
+
+val both = for {
+  a <- step1
+  b <- step2
+} yield (a, b)
+// both: cats.data.IndexedStateT[cats.Eval,Int,Int,(String, String)] = cats.data.IndexedStateT@47a10835
+
+val (state, result) = both.run(20).value
+// state: Int = 42
+// result: (String, String) = (Result of step1: 21,Result of step2:
+42)
+```
+
+* 最後の結果は両方のtransformationを順番に適用した結果
+* for式で指定していないにも関わらず(?)、ステップごとにスレッド化される
+
+* Stateモナドを使う一般的なモデルは、各計算ステップをインスタンスで表現し、標準的なモナド演算子で合成する
+* Catsはprimitiveなステップを生成するための便利なコンストラクタを提供する
+  * resultを取り出す `get`
+  * stateをupdateしてunitを返す `set`
+  * stateを無視してresultを返す `pure`
+  * stateにtransformを適用して取り出す `inspect`
+  * stateにupdateを適用して返す `modify`
+
+
+```scala
+val getDemo = State.get[Int]
+// getDemo: cats.data.State[Int,Int] = cats.data.IndexedStateT@6ffe574a
+
+getDemo.run(10).value
+// res3: (Int, Int) = (10,10)
+
+val setDemo = State.set[Int](30)
+// setDemo: cats.data.State[Int,Unit] = cats.data.
+     IndexedStateT@4168bec2
+
+setDemo.run(10).value
+// res4: (Int, Unit) = (30,())
+
+
+val pureDemo = State.pure[Int, String]("Result")
+// pureDemo: cats.data.State[Int,String] = cats.data.IndexedStateT@6812d576
+
+pureDemo.run(10).value
+// res5: (Int, String) = (10,Result)
+
+val inspectDemo = State.inspect[Int, String](_ + "!") // inspectDemo: cats.data.State[Int,String] = cats.data.IndexedStateT@37c08614
+
+inspectDemo.run(10).value
+// res6: (Int, String) = (10,10!)
+
+
+val modifyDemo = State.modify[Int](_ + 1)
+// modifyDemo: cats.data.State[Int,Unit] = cats.data.IndexedStateT@4242cae6
+
+modifyDemo.run(10).value
+// res7: (Int, Unit) = (11,())
+```
+
+* これらのブロックをfor式を使って組み立てられる
+* 一般的にstateの変更のためだけのtransformの結果は無視する
+
+```scala
+import State._
+
+val program: State[Int, (Int, Int, Int)] = for {
+  a <- get[Int]
+  _ <- set[Int](a + 1)
+  b <- get[Int]
+  _ <- modify[Int](_ + 1)
+c <- inspect[Int, Int](_ * 1000)
+} yield (a, b, c)
+// program: cats.data.State[Int,(Int, Int, Int)] = cats.data.
+     IndexedStateT@22a799f8
+
+val (state, result) = program.run(1).value
+// state: Int = 3
+// result: (Int, Int, Int) = (1,2,3000)
+```
+
+#### 4.9.3 Exercise: Post-Order Calculator
+
+TODO
+
+
+### 4.10 Defining Custom Monads
+
+* モナドのメソッドを定義すればカスタムモナドを作ることができる
+* 必要なのは flatMap / pure / tailRecM (これはまだ説明されてない)
+
+Optionの例
+```scala
+import cats.Monad
+import scala.annotation.tailrec
+val optionMonad = new Monad[Option] {
+  def flatMap[A, B](opt: Option[A])
+      (fn: A => Option[B]): Option[B] =
+    opt flatMap fn
+
+  def pure[A](opt: A): Option[A] =
+    Some(opt)
+
+  @tailrec
+  def tailRecM[A, B](a: A)
+      (fn: A => Option[Either[A, B]]): Option[B] =
+    fn(a) match {
+      case None           => None
+      case Some(Left(a1)) => tailRecM(a1)(fn)
+      case Some(Right(b)) => Some(b)
+    } 
+}
+```
+
+* tailRecMはネストしたflatMap呼び出しのスタック消費を制限するためにCats内で使われる
+* このテクニックはPureScriptの作者の Phil Freeman による以下の論文から来ている
+  * http://functorial.com/stack-safety-for-free/index.pdf
+* ResultがRightであるまで再帰的に呼び出される
+* tailRecMが末尾再帰可能である限り、Section7.1出でてくるような大きなリストの再帰的なfoldの場合においてもCatsはstack safeを保証する
+* 末尾再帰化できない場合はstack safeを保証できず、大きな計算の場合はStackOverflowErrorsを返す
+* すべてのbuild-inのCatsのモナドは末尾再帰化されたtailRecMを持っている
+
+#### 4.10.1 Exercise: Branching out Further with Monads
+
+前の章でみたTreeデータ構造をモナドにしてみよう。
+
+```scala
+sealed trait Tree[+A]
+
+final case class Branch[A](left: Tree[A], right: Tree[A])
+  extends Tree[A]
+
+final case class Leaf[A](value: A) extends Tree[A]
+
+def branch[A](left: Tree[A], right: Tree[A]): Tree[A] =
+  Branch(left, right)
+
+def leaf[A](value: A): Tree[A] =
+  Leaf(value)
+```
+
+non-tail-rec
+```scala
+import cats.Monad
+
+implicit val treeMonad = new Monad[Tree] {
+  def pure[A](value: A): Tree[A] =
+
+Leaf(value)
+  def flatMap[A, B](tree: Tree[A])
+      (func: A => Tree[B]): Tree[B] =
+    tree match {
+      case Branch(l, r) =>
+        Branch(flatMap(l)(func), flatMap(r)(func)) case Leaf(value) =>
+        func(value)
+    }
+
+ def tailRecM[A, B](a: A)
+     (func: A => Tree[Either[A, B]]): Tree[B] =
+   flatMap(func(a)) {
+     case Left(value) =>
+       tailRecM(value)(func)
+     case Right(value) =>
+       Leaf(value)
+   }
+}
+```
+
+tail-rec
+```scala
+import cats.Monad
+
+implicit val treeMonad = new Monad[Tree] {
+  def pure[A](value: A): Tree[A] =
+    Leaf(value)
+
+  def flatMap[A, B](tree: Tree[A])
+      (func: A => Tree[B]): Tree[B] =
+    tree match {
+      case Branch(l, r) =>
+        Branch(flatMap(l)(func), flatMap(r)(func)) case Leaf(value) =>
+        func(value)
+      }
+
+  def tailRecM[A, B](arg: A)
+      (func: A => Tree[Either[A, B]]): Tree[B] = {
+    @tailrec
+    def loop(
+          open: List[Tree[Either[A, B]]],
+          closed: List[Option[Tree[B]]]): List[Tree[B]] =
+      open match {
+        case Branch(l, r) :: next =>
+          loop(l :: r :: next, None :: closed)
+        case Leaf(Left(value)) :: next =>
+          loop(func(value) :: next, closed)
+        case Leaf(Right(value)) :: next =>
+          loop(next, Some(pure(value)) :: closed)
+        case Nil =>
+          closed.foldLeft(Nil: List[Tree[B]]) { (acc, maybeTree) =>
+            maybeTree.map(_ :: acc).getOrElse {
+              val left :: right :: tail = acc
+              branch(left, right) :: tail
+            }
+          }
+      }
+    loop(List(func(arg)), Nil).head
+  }
+}
+
+### 4.11 Summary
+
+* モナドの詳細について見てきた
+* flatMapは連続した計算に対し、次にどの操作が発生するかを記述する演算子として見ることができる
+* この見方から見ると
+  * Optionはエラーメッセージなしで失敗しうる計算の表現
+  * Eitherはエラーメッセージありで失敗しうる計算の表現
+  * Listは複数の結果がありうる場合の表現
+  * Futureはある未来の時点で値を生み出す計算の表現
+* 他にもID, Reader, Writer, State等の例を見た
+* 最後に、あんまりないだろうけどtailRecMを使ってカスタムモナドを定義する方法も学んだ
+* Monadを理解するためにtailRecMを理解する必要はないが、monadicなコードを書くときに役立つ
